@@ -5,10 +5,15 @@ License plate detection API using YOLOv11, based on the implementation from the 
 ## Features
 
 - 🚗 License plate detection using YOLOv11
+- 📝 **License plate number extraction using EasyOCR or Gemini**
+- 🤖 **Gemini 2.0+ Enhanced Object Detection** - Advanced object detection with bounding boxes
+- 🎯 **Gemini 2.5+ Segmentation** - Pixel-level segmentation masks
 - 📸 Multiple input methods: base64, image URL, or file upload
-- 🎨 Optional visualization with bounding boxes
+- 🎨 Optional visualization with bounding boxes and extracted text
 - ⚡ Fast inference with ultralytics
-- 📊 Detailed detection results with confidence scores
+- 📊 Detailed detection results with confidence scores and OCR results
+- 🎬 **Full video processing with comprehensive statistics**
+- 📈 **Plate occurrence tracking and timeline analysis**
 - 🔧 Easy to extend with custom trained models
 
 ## Installation
@@ -18,7 +23,15 @@ License plate detection API using YOLOv11, based on the implementation from the 
 pip install -r requirements.txt
 ```
 
-2. The YOLOv11 model will be downloaded automatically on first run.
+2. Set up environment variables (optional):
+```bash
+export GEMINI_API_KEY=your_api_key_here  # Required for Gemini features
+export YOLO_MODEL_PATH=/path/to/model.pt  # Optional: custom YOLO model
+export CONFIDENCE_THRESHOLD=0.25  # Optional: detection confidence threshold
+export OCR_ENGINE=easyocr  # Optional: 'easyocr' or 'gemini'
+```
+
+3. The YOLOv11 model will be downloaded automatically on first run.
 
 ## Usage
 
@@ -80,7 +93,174 @@ GET /detect/video
 ```
 Note: This endpoint uses the video file at `./files/deneme.mp4` and optional model at `./models/license_plate_detector.pt` loaded at startup.
 
-### Response Format
+#### 5. Process Entire Video with Statistics
+```bash
+POST /process/video?frame_skip=5&start_frame=0&end_frame=500&min_confidence=0.3
+
+# Process every 5th frame (faster processing)
+POST /process/video?frame_skip=5
+
+# Process all frames with custom confidence threshold
+POST /process/video?frame_skip=1&min_confidence=0.5
+
+# Process specific frame range
+POST /process/video?frame_skip=3&start_frame=0&end_frame=200
+```
+
+**Parameters:**
+- `frame_skip` (int, default: 1): Process every Nth frame (1 = all frames, 5 = every 5th frame)
+- `start_frame` (int, optional): Start processing from this frame number
+- `end_frame` (int, optional): Stop processing at this frame number
+- `min_confidence` (float, optional): Override default confidence threshold
+
+#### 6. Gemini Object Detection (Gemini 2.0+)
+```bash
+POST /gemini/detect
+Content-Type: application/json
+
+{
+  "image_url": "https://example.com/car.jpg",
+  "prompt": "Detect all license plates in the image. The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.",
+  "include_visualization": true
+}
+```
+
+Or with base64:
+```json
+{
+  "data": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
+  "prompt": "Detect all cars and license plates",
+  "include_visualization": true
+}
+```
+
+**File Upload:**
+```bash
+POST /gemini/detect/upload
+Content-Type: multipart/form-data
+
+file: [image file]
+prompt: "Detect all green objects"
+include_visualization: true
+```
+
+**Response:**
+```json
+{
+  "detected": true,
+  "count": 2,
+  "detections": [
+    {
+      "label": "license plate",
+      "box_2d": [100, 200, 350, 280],
+      "box_2d_normalized": [200.0, 100.0, 280.0, 350.0],
+      "confidence": 0.95
+    }
+  ],
+  "message": "Found 2 detection(s)",
+  "image_shape": {"width": 1280, "height": 720},
+  "visualization": "base64_encoded_image..."
+}
+```
+
+#### 7. Gemini Segmentation (Gemini 2.5+)
+```bash
+POST /gemini/segment
+Content-Type: application/json
+
+{
+  "image_url": "https://example.com/car.jpg",
+  "prompt": "Give the segmentation masks for all license plates in the image. Output a JSON list...",
+  "include_visualization": true,
+  "alpha": 0.5
+}
+```
+
+**File Upload:**
+```bash
+POST /gemini/segment/upload
+Content-Type: multipart/form-data
+
+file: [image file]
+prompt: "Segment all wooden and glass items"
+include_visualization: true
+alpha: 0.6
+```
+
+**Response:**
+```json
+{
+  "detected": true,
+  "count": 2,
+  "segmentations": [
+    {
+      "label": "license plate",
+      "box_2d": [100, 200, 350, 280],
+      "box_2d_normalized": [200.0, 100.0, 280.0, 350.0],
+      "confidence": 0.95,
+      "mask_base64": "base64_encoded_mask_image..."
+    }
+  ],
+  "message": "Found 2 segmentation(s)",
+  "image_shape": {"width": 1280, "height": 720},
+  "visualization": "base64_encoded_image_with_overlays..."
+}
+```
+
+**Returns:** Comprehensive statistics including:
+- Video information (frames, FPS, resolution, duration)
+- Processing statistics (processed frames, detection counts, processing time)
+- Plate summaries (unique plates, occurrence counts, timestamps, confidence scores)
+- All individual detections with frame numbers and timestamps
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "message": "Processed 126 frames. Found 3 unique license plate(s) with 45 total detection(s).",
+  "video_info": {
+    "path": "./files/deneme.mp4",
+    "total_frames": 631,
+    "fps": 30.0,
+    "resolution": {"width": 1920, "height": 1080},
+    "duration_seconds": 21.03
+  },
+  "statistics": {
+    "total_frames": 631,
+    "processed_frames": 126,
+    "frames_with_detections": 45,
+    "total_detections": 45,
+    "unique_plates": 3,
+    "video_duration_seconds": 21.03,
+    "processing_time_seconds": 15.32,
+    "average_fps": 8.22,
+    "detection_rate": 2.14
+  },
+  "plate_summaries": [
+    {
+      "plate_text": "N-894JV",
+      "total_occurrences": 18,
+      "first_seen_frame": 100,
+      "last_seen_frame": 250,
+      "first_seen_timestamp": 3.33,
+      "last_seen_timestamp": 8.33,
+      "average_confidence": 0.7567,
+      "average_ocr_confidence": 0.5534,
+      "frames_with_detection": [100, 101, 105, ...],
+      "occurrences": [...]
+    }
+  ],
+  "all_detections": [...],
+  "processing_parameters": {
+    "frame_skip": 5,
+    "start_frame": 0,
+    "end_frame": 500,
+    "confidence_threshold": 0.25
+  }
+}
+```
+
+### Response Format (Single Frame/Image)
 
 ```json
 {
@@ -88,7 +268,7 @@ Note: This endpoint uses the video file at `./files/deneme.mp4` and optional mod
   "count": 2,
   "detections": [
     {
-      "class_name": "car",
+      "class_name": "License_Plate",
       "confidence": 0.8567,
       "bbox": {
         "x1": 100.5,
@@ -97,7 +277,9 @@ Note: This endpoint uses the video file at `./files/deneme.mp4` and optional mod
         "y2": 280.1,
         "width": 249.7,
         "height": 79.8
-      }
+      },
+      "plate_text": "ABC123",
+      "ocr_confidence": 0.9234
     }
   ],
   "message": "Found 2 detection(s)",
@@ -134,8 +316,10 @@ If these files are not found, the API will still work using the default pretrain
 
 ## Environment Variables
 
+- `GEMINI_API_KEY`: Google Gemini API key (required for Gemini detection/segmentation features)
 - `YOLO_MODEL_PATH`: Path to custom YOLO model file (optional, overrides default path)
 - `CONFIDENCE_THRESHOLD`: Minimum confidence for detections (default: 0.25)
+- `OCR_ENGINE`: OCR engine to use - 'easyocr' or 'gemini' (default: 'easyocr')
 
 ## Training Your Own Model
 
@@ -162,11 +346,41 @@ yolo train data=license_plates.yaml model=yolo11n.pt epochs=100
 └── README.md             # This file
 ```
 
+## OCR Features
+
+- **EasyOCR Integration**: Automatically extracts license plate numbers from detected regions
+- **Gemini OCR**: Alternative OCR using Google Gemini Vision API (legacy support)
+- **Text Preprocessing**: Automatically enhances license plate regions for better OCR accuracy
+- **Confidence Scores**: Returns OCR confidence for each extracted plate number
+- **Visualization**: Shows extracted text on annotated images
+
+## Gemini Image Understanding Features
+
+### Object Detection (Gemini 2.0+)
+- **Enhanced Detection**: Uses Gemini 2.0+ models with improved accuracy for object detection
+- **Custom Prompts**: Specify what objects to detect using natural language prompts
+- **Bounding Boxes**: Returns normalized coordinates (0-1000) and absolute pixel coordinates
+- **Flexible Input**: Supports images from URLs, base64, or file uploads
+
+### Segmentation (Gemini 2.5+)
+- **Pixel-Level Masks**: Get precise segmentation masks for detected objects
+- **Custom Segmentation**: Use prompts to specify which objects to segment
+- **Mask Visualization**: Overlay masks on original images with customizable transparency
+- **Base64 Masks**: Receive individual mask images as base64-encoded PNG files
+
+**Example Prompts:**
+- `"Detect all license plates in the image"`
+- `"Show bounding boxes of all green objects in this image"`
+- `"Segment all cars and trucks"`
+- `"Give the segmentation masks for wooden and glass items"`
+
 ## Notes
 
 - The current implementation uses YOLOv11 pretrained model which detects general objects
 - For production license plate detection, train a custom model on license plate datasets
-- The visualization feature draws bounding boxes on detected objects
+- EasyOCR will download its models on first run (this may take a few minutes)
+- OCR processing adds some overhead - expect 1-2 seconds per detection for text extraction
+- The visualization feature draws bounding boxes and extracted text on detected objects
 - All image formats supported by PIL/OpenCV are accepted
 
 ## License
