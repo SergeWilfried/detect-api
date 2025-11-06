@@ -1000,9 +1000,9 @@ async def root():
             "/process/video": "POST - Process entire video with statistics",
             "/process/video/upload": "POST - Process uploaded video file (synchronous)",
             "/process/video/upload/async": "POST - Process uploaded video file (async, recommended for large files)",
-            "/api/jobs": "GET - List all jobs with pagination and filters",
-            "/api/detections": "GET - List all detections with pagination and filters",
-            "/api/violations": "GET - List all violations with pagination and filters",
+            "/jobs": "GET - List all jobs with pagination and filters",
+            "/detections": "GET - List all detections with pagination and filters",
+            "/violations": "GET - List all violations with pagination and filters",
             "/jobs/{job_id}": "GET - Get job status and progress",
             "/jobs/{job_id}/result": "GET - Get completed job result",
             "/gemini/detect": "POST - Gemini object detection (2.0+)",
@@ -2299,7 +2299,7 @@ class JobListItem(BaseModel):
     violations: Optional[int] = None
 
 
-@app.get("/api/detections", response_model=List[DetectionListItem])
+@app.get("/detections", response_model=List[DetectionListItem])
 async def get_detections(
     limit: int = 100,
     skip: int = 0,
@@ -2363,7 +2363,7 @@ async def get_detections(
         )
 
 
-@app.get("/api/violations", response_model=List[ViolationListItem])
+@app.get("/violations", response_model=List[ViolationListItem])
 async def get_violations(
     limit: int = 100,
     skip: int = 0,
@@ -2432,7 +2432,7 @@ async def get_violations(
         )
 
 
-@app.get("/api/jobs", response_model=List[JobListItem])
+@app.get("/jobs", response_model=List[JobListItem])
 async def get_jobs(
     limit: int = 100,
     skip: int = 0,
