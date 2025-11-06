@@ -31,10 +31,13 @@ ENV/
 *.swp
 *.swo
 
-# Model files
+# Model files (exclude from git, but allow in models/ directory for Docker builds)
 *.pt
+!models/*.pt
 *.onnx
+!models/*.onnx
 *.pth
+!models/*.pth
 
 # Images and videos
 *.jpg

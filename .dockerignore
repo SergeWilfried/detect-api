@@ -34,10 +34,13 @@ ENV/
 *.swp
 *.swo
 
-# Model files (keep these if needed, comment out if you want to include them)
-# *.pt
-# *.onnx
-# *.pth
+# Model files - include model files in models/ directory
+*.pt
+!models/*.pt
+*.onnx
+!models/*.onnx
+*.pth
+!models/*.pth
 
 # Images (exclude test images, but allow files directory)
 *.jpg

@@ -34,9 +34,23 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Ensure files directory exists and contains video file
-# Note: The video file must be committed to git or added manually
-RUN mkdir -p files && ls -la files/ || echo "Files directory created"
+# Ensure directories exist
+RUN mkdir -p files models
+
+# Verify model file if it exists
+RUN if [ -f "models/license_plate_detector.pt" ]; then \
+        echo "✓ Custom model file found in models/"; \
+        ls -lh models/*.pt; \
+    else \
+        echo "⚠ No custom model file found - will use default YOLO model"; \
+    fi
+
+# Verify video file if it exists
+RUN if [ -f "files/2.mp4" ]; then \
+        echo "✓ Test video file found"; \
+    else \
+        echo "⚠ Test video file not found - video endpoints may not work"; \
+    fi
 
 # Make boot.sh executable
 RUN chmod +x boot.sh
