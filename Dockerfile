@@ -6,8 +6,9 @@ FROM python:3.13-slim
 
 # Install system dependencies required for OpenCV
 # These are needed even for opencv-python-headless in some cases
+# Note: libgl1-mesa-glx was replaced with libgl1 in newer Debian versions (Trixie+)
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libgthread-2.0-0 \
     libsm6 \
