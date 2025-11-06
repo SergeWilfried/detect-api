@@ -1000,6 +1000,9 @@ async def root():
             "/process/video": "POST - Process entire video with statistics",
             "/process/video/upload": "POST - Process uploaded video file (synchronous)",
             "/process/video/upload/async": "POST - Process uploaded video file (async, recommended for large files)",
+            "/api/jobs": "GET - List all jobs with pagination and filters",
+            "/api/detections": "GET - List all detections with pagination and filters",
+            "/api/violations": "GET - List all violations with pagination and filters",
             "/jobs/{job_id}": "GET - Get job status and progress",
             "/jobs/{job_id}/result": "GET - Get completed job result",
             "/gemini/detect": "POST - Gemini object detection (2.0+)",
@@ -2280,6 +2283,22 @@ class ViolationListItem(BaseModel):
     image: Optional[str] = None
 
 
+class JobListItem(BaseModel):
+    """Job item for list endpoint"""
+    id: str
+    job_id: str
+    job_type: str
+    status: str  # pending, processing, completed, failed
+    progress: float  # 0.0 to 1.0
+    message: str
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    video_name: Optional[str] = None
+    detections: Optional[int] = None
+    violations: Optional[int] = None
+
+
 @app.get("/api/detections", response_model=List[DetectionListItem])
 async def get_detections(
     limit: int = 100,
@@ -2410,6 +2429,117 @@ async def get_violations(
         raise HTTPException(
             status_code=500,
             detail=f"Error retrieving violations: {str(e)}"
+        )
+
+
+@app.get("/api/jobs", response_model=List[JobListItem])
+async def get_jobs(
+    limit: int = 100,
+    skip: int = 0,
+    status: Optional[str] = None,
+    job_type: Optional[str] = None
+):
+    """
+    Get list of jobs from MongoDB
+    
+    Args:
+        limit: Maximum number of jobs to return (default: 100)
+        skip: Number of jobs to skip (for pagination)
+        status: Filter by job status (pending, processing, completed, failed) (optional)
+        job_type: Filter by job type (optional)
+    
+    Returns:
+        List of job items
+    """
+    if mongo_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB not available"
+        )
+    
+    try:
+        collection = mongo_db["jobs"]
+        
+        # Build query
+        query = {}
+        if status:
+            query["status"] = status
+        if job_type:
+            query["job_type"] = job_type
+        
+        # Query MongoDB - sort by created_at descending (newest first)
+        cursor = collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        jobs = list(cursor)
+        
+        # Transform to response format
+        result = []
+        for doc in jobs:
+            # Extract video name from metadata if available
+            metadata = doc.get("metadata", {})
+            video_name = metadata.get("filename") if isinstance(metadata, dict) else None
+            
+            # Extract detections and violations count from result if available
+            result_data = doc.get("result", {})
+            detections_count = None
+            violations_count = None
+            
+            if isinstance(result_data, dict):
+                # Try to get from statistics
+                stats = result_data.get("statistics", {})
+                if stats:
+                    detections_count = stats.get("total_detections")
+                
+                # Try to get violations count (if stored in result)
+                # This would need to be calculated or stored separately
+                # For now, we'll leave it as None unless it's in the result
+            
+            # Convert timestamps
+            created_at = doc.get("created_at")
+            if isinstance(created_at, datetime):
+                created_at_str = created_at.isoformat()
+            elif isinstance(created_at, str):
+                created_at_str = created_at
+            else:
+                created_at_str = datetime.utcnow().isoformat()
+            
+            started_at = doc.get("started_at")
+            started_at_str = None
+            if started_at:
+                if isinstance(started_at, datetime):
+                    started_at_str = started_at.isoformat()
+                elif isinstance(started_at, str):
+                    started_at_str = started_at
+            
+            completed_at = doc.get("completed_at")
+            completed_at_str = None
+            if completed_at:
+                if isinstance(completed_at, datetime):
+                    completed_at_str = completed_at.isoformat()
+                elif isinstance(completed_at, str):
+                    completed_at_str = completed_at
+            
+            job_item = JobListItem(
+                id=str(doc.get("_id", "")),
+                job_id=doc.get("job_id", ""),
+                job_type=doc.get("job_type", "unknown"),
+                status=doc.get("status", "pending"),
+                progress=doc.get("progress", 0.0),
+                message=doc.get("message", ""),
+                created_at=created_at_str,
+                started_at=started_at_str,
+                completed_at=completed_at_str,
+                video_name=video_name,
+                detections=detections_count,
+                violations=violations_count
+            )
+            result.append(job_item)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving jobs: {str(e)}"
         )
 
 
