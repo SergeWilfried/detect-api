@@ -1,0 +1,1626 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "License Plate Detection API",
+    "description": "A comprehensive API for license plate detection and recognition using YOLOv11 and OCR (EasyOCR or Google Gemini).\n\n## Features\n- 🚗 License plate detection using YOLOv11\n- 📝 License plate number extraction using EasyOCR or Gemini\n- 🤖 Gemini 2.0+ Enhanced Object Detection\n- 🎯 Gemini 2.5+ Segmentation\n- 📸 Multiple input methods: base64, image URL, or file upload\n- 🎨 Optional visualization with bounding boxes and extracted text\n- 🎬 Full video processing with comprehensive statistics\n- 📈 Plate occurrence tracking and timeline analysis\n- ⚡ Asynchronous video processing with job tracking (MongoDB/Redis)\n\n## Authentication\nSome endpoints require a `GEMINI_API_KEY` environment variable for Gemini features.\n\n## Database Integration\nThe API supports optional MongoDB and Redis integration for:\n- Persistent job storage (MongoDB)\n- Fast job status caching (Redis)\n\nSet `MONGODB_URI` and `REDIS_URL` environment variables to enable these features.\n",
+    "version": "1.0.0",
+    "contact": {
+      "name": "API Support"
+    },
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development server"
+    },
+    {
+      "url": "https://detect-api-production.up.railway.app",
+      "description": "Production server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health check and system status"
+    },
+    {
+      "name": "Detection",
+      "description": "License plate detection from images"
+    },
+    {
+      "name": "Video Processing",
+      "description": "Video processing and analysis"
+    },
+    {
+      "name": "Jobs",
+      "description": "Asynchronous job management"
+    },
+    {
+      "name": "Gemini",
+      "description": "Google Gemini AI detection and segmentation"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Health check",
+        "description": "Check API health and database connectivity",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "API is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "healthy"
+                    },
+                    "mongodb": {
+                      "type": "string",
+                      "example": "connected"
+                    },
+                    "redis": {
+                      "type": "string",
+                      "example": "connected"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "API information",
+        "description": "Get API information and available endpoints",
+        "operationId": "root",
+        "responses": {
+          "200": {
+            "description": "API information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "example": "License Plate Detection API"
+                    },
+                    "version": {
+                      "type": "string",
+                      "example": "1.0.0"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "endpoints": {
+                      "type": "object"
+                    },
+                    "test_resources": {
+                      "type": "object"
+                    },
+                    "databases": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/detect": {
+      "post": {
+        "tags": [
+          "Detection"
+        ],
+        "summary": "Detect license plates from base64 or URL",
+        "description": "Detect license plates in an image provided as base64 encoded data or image URL.\nReturns detection results with bounding boxes, confidence scores, and optional OCR text extraction.\n",
+        "operationId": "detect",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetectRequest"
+              },
+              "examples": {
+                "url": {
+                  "summary": "Detect from URL",
+                  "value": {
+                    "image_url": "https://example.com/car.jpg",
+                    "include_visualization": true
+                  }
+                },
+                "base64": {
+                  "summary": "Detect from base64",
+                  "value": {
+                    "data": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
+                    "include_visualization": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Detection successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/detect/upload": {
+      "post": {
+        "tags": [
+          "Detection"
+        ],
+        "summary": "Detect license plates from file upload",
+        "description": "Upload an image file and detect license plates",
+        "operationId": "detectUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Image file to process"
+                  },
+                  "include_visualization": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Include annotated image in response"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Detection successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/detect/video": {
+      "get": {
+        "tags": [
+          "Video Processing"
+        ],
+        "summary": "Process frame from test video",
+        "description": "Process a specific frame from the test video file (./files/2.mp4).\nIf no frame_number is provided, processes the next frame.\n",
+        "operationId": "detectVideo",
+        "parameters": [
+          {
+            "name": "frame_number",
+            "in": "query",
+            "description": "Frame number to process (0-indexed)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Frame processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/process/video": {
+      "post": {
+        "tags": [
+          "Video Processing"
+        ],
+        "summary": "Process entire video file (synchronous)",
+        "description": "Process the entire test video file (./files/2.mp4) with comprehensive statistics.\nThis is a synchronous operation that may take a long time for large videos.\nFor large files, consider using the async endpoint instead.\n",
+        "operationId": "processVideo",
+        "parameters": [
+          {
+            "name": "frame_skip",
+            "in": "query",
+            "description": "Process every Nth frame (1 = all frames, 5 = every 5th frame)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "start_frame",
+            "in": "query",
+            "description": "Start processing from this frame number",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "end_frame",
+            "in": "query",
+            "description": "Stop processing at this frame number",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "min_confidence",
+            "in": "query",
+            "description": "Override default confidence threshold",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "float",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Video processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoProcessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Video file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Processing error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/process/video/upload": {
+      "post": {
+        "tags": [
+          "Video Processing"
+        ],
+        "summary": "Process uploaded video file (synchronous)",
+        "description": "Upload and process a video file synchronously.\nThis operation blocks until processing is complete.\nFor large files (>50MB), use the async endpoint instead.\n",
+        "operationId": "processVideoUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Video file to process (MP4, AVI, MOV, etc.)"
+                  },
+                  "frame_skip": {
+                    "type": "integer",
+                    "description": "Process every Nth frame",
+                    "default": 1
+                  },
+                  "start_frame": {
+                    "type": "integer",
+                    "description": "Start from this frame"
+                  },
+                  "end_frame": {
+                    "type": "integer",
+                    "description": "Stop at this frame"
+                  },
+                  "min_confidence": {
+                    "type": "number",
+                    "format": "float",
+                    "description": "Confidence threshold"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Video processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoProcessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (file too large or invalid format)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Processing error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/process/video/upload/async": {
+      "post": {
+        "tags": [
+          "Video Processing",
+          "Jobs"
+        ],
+        "summary": "Process uploaded video file (asynchronous)",
+        "description": "Upload a video file for asynchronous processing.\nReturns a job ID that can be used to track progress and retrieve results.\nRecommended for large files or long processing times.\n",
+        "operationId": "processVideoUploadAsync",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Video file to process"
+                  },
+                  "frame_skip": {
+                    "type": "integer",
+                    "description": "Process every Nth frame",
+                    "default": 1
+                  },
+                  "start_frame": {
+                    "type": "integer",
+                    "description": "Start from this frame"
+                  },
+                  "end_frame": {
+                    "type": "integer",
+                    "description": "Stop at this frame"
+                  },
+                  "min_confidence": {
+                    "type": "number",
+                    "format": "float",
+                    "description": "Confidence threshold"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSubmitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error creating job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Get job status",
+        "description": "Get the current status and progress of an asynchronous job.\nReturns job status (pending, processing, completed, failed) and progress (0.0 to 1.0).\n",
+        "operationId": "getJobStatus",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "description": "Job ID returned from async endpoint",
+            "schema": {
+              "type": "string",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Job is still processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Job failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/result": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Get job result",
+        "description": "Get the final result of a completed job.\nOnly available when job status is \"completed\".\n",
+        "operationId": "getJobResult",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "description": "Job ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job result retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoProcessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Job is still processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found or result not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Job failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gemini/detect": {
+      "post": {
+        "tags": [
+          "Gemini"
+        ],
+        "summary": "Gemini object detection",
+        "description": "Detect objects in images using Google Gemini 2.0+ enhanced detection capabilities.\nRequires GEMINI_API_KEY environment variable.\n",
+        "operationId": "geminiDetect",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeminiDetectRequest"
+              },
+              "examples": {
+                "url": {
+                  "summary": "Detect from URL",
+                  "value": {
+                    "image_url": "https://example.com/car.jpg",
+                    "prompt": "Detect all license plates in the image",
+                    "include_visualization": true
+                  }
+                },
+                "base64": {
+                  "summary": "Detect from base64",
+                  "value": {
+                    "data": "data:image/jpeg;base64,...",
+                    "prompt": "Detect all cars and license plates",
+                    "include_visualization": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Detection successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeminiDetectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gemini/detect/upload": {
+      "post": {
+        "tags": [
+          "Gemini"
+        ],
+        "summary": "Gemini detection from file upload",
+        "description": "Upload an image and detect objects using Gemini",
+        "operationId": "geminiDetectUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Image file to process"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "description": "Custom detection prompt"
+                  },
+                  "include_visualization": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Include annotated image"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Detection successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeminiDetectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gemini/segment": {
+      "post": {
+        "tags": [
+          "Gemini"
+        ],
+        "summary": "Gemini object segmentation",
+        "description": "Segment objects in images using Google Gemini 2.5+ segmentation capabilities.\nReturns pixel-level masks for detected objects.\nRequires GEMINI_API_KEY environment variable.\n",
+        "operationId": "geminiSegment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeminiSegmentRequest"
+              },
+              "examples": {
+                "url": {
+                  "summary": "Segment from URL",
+                  "value": {
+                    "image_url": "https://example.com/car.jpg",
+                    "prompt": "Segment all license plates",
+                    "include_visualization": true,
+                    "alpha": 0.5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Segmentation successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeminiSegmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gemini/segment/upload": {
+      "post": {
+        "tags": [
+          "Gemini"
+        ],
+        "summary": "Gemini segmentation from file upload",
+        "description": "Upload an image and segment objects using Gemini",
+        "operationId": "geminiSegmentUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Image file to process"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "description": "Custom segmentation prompt"
+                  },
+                  "include_visualization": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "alpha": {
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5,
+                    "description": "Transparency for mask overlay (0.0 to 1.0)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Segmentation successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeminiSegmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DetectRequest": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 encoded image data (with or without data URI prefix)",
+            "example": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+          },
+          "image_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the image to process",
+            "example": "https://example.com/car.jpg"
+          },
+          "include_visualization": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include annotated image with bounding boxes in response"
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "data"
+            ]
+          },
+          {
+            "required": [
+              "image_url"
+            ]
+          }
+        ]
+      },
+      "DetectResponse": {
+        "type": "object",
+        "properties": {
+          "detected": {
+            "type": "boolean",
+            "description": "Whether any license plates were detected"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of detections"
+          },
+          "detections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Detection"
+            }
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "Average confidence score"
+          },
+          "image_shape": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
+            }
+          },
+          "visualization": {
+            "type": "string",
+            "nullable": true,
+            "description": "Base64 encoded annotated image"
+          }
+        }
+      },
+      "Detection": {
+        "type": "object",
+        "properties": {
+          "class_name": {
+            "type": "string",
+            "description": "Detected class name",
+            "example": "license_plate"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Detection confidence (0.0 to 1.0)"
+          },
+          "bbox": {
+            "$ref": "#/components/schemas/BoundingBox"
+          },
+          "plate_text": {
+            "type": "string",
+            "nullable": true,
+            "description": "Extracted license plate text (OCR result)"
+          },
+          "ocr_confidence": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "OCR confidence score"
+          }
+        }
+      },
+      "BoundingBox": {
+        "type": "object",
+        "properties": {
+          "x1": {
+            "type": "number",
+            "format": "float",
+            "description": "Left coordinate"
+          },
+          "y1": {
+            "type": "number",
+            "format": "float",
+            "description": "Top coordinate"
+          },
+          "x2": {
+            "type": "number",
+            "format": "float",
+            "description": "Right coordinate"
+          },
+          "y2": {
+            "type": "number",
+            "format": "float",
+            "description": "Bottom coordinate"
+          },
+          "width": {
+            "type": "number",
+            "format": "float",
+            "description": "Bounding box width"
+          },
+          "height": {
+            "type": "number",
+            "format": "float",
+            "description": "Bounding box height"
+          }
+        }
+      },
+      "VideoProcessResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether processing completed successfully"
+          },
+          "message": {
+            "type": "string",
+            "description": "Processing status message"
+          },
+          "video_info": {
+            "type": "object",
+            "description": "Video metadata",
+            "additionalProperties": true,
+            "properties": {
+              "frame_count": {
+                "type": "integer"
+              },
+              "fps": {
+                "type": "number",
+                "format": "float"
+              },
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "duration_seconds": {
+                "type": "number",
+                "format": "float"
+              }
+            }
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/VideoProcessingStats"
+          },
+          "plate_summaries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlateSummary"
+            }
+          },
+          "all_detections": {
+            "type": "array",
+            "description": "Detailed list of all detections",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "processing_parameters": {
+            "type": "object",
+            "description": "Parameters used for processing",
+            "additionalProperties": true
+          }
+        }
+      },
+      "VideoProcessingStats": {
+        "type": "object",
+        "properties": {
+          "total_frames": {
+            "type": "integer",
+            "description": "Total frames in video"
+          },
+          "processed_frames": {
+            "type": "integer",
+            "description": "Number of frames processed"
+          },
+          "frames_with_detections": {
+            "type": "integer",
+            "description": "Number of frames containing detections"
+          },
+          "total_detections": {
+            "type": "integer",
+            "description": "Total number of detections across all frames"
+          },
+          "unique_plates": {
+            "type": "integer",
+            "description": "Number of unique license plates detected"
+          },
+          "video_duration_seconds": {
+            "type": "number",
+            "format": "float",
+            "description": "Video duration in seconds"
+          },
+          "processing_time_seconds": {
+            "type": "number",
+            "format": "float",
+            "description": "Processing time in seconds"
+          },
+          "average_fps": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "Average processing FPS"
+          },
+          "detection_rate": {
+            "type": "number",
+            "format": "float",
+            "description": "Detections per second"
+          }
+        }
+      },
+      "PlateSummary": {
+        "type": "object",
+        "properties": {
+          "plate_text": {
+            "type": "string",
+            "description": "Detected license plate text"
+          },
+          "total_occurrences": {
+            "type": "integer",
+            "description": "Number of times this plate was detected"
+          },
+          "first_seen_frame": {
+            "type": "integer",
+            "description": "Frame number where plate was first detected"
+          },
+          "last_seen_frame": {
+            "type": "integer",
+            "description": "Frame number where plate was last detected"
+          },
+          "first_seen_timestamp": {
+            "type": "number",
+            "format": "float",
+            "description": "Timestamp (seconds) when plate was first seen"
+          },
+          "last_seen_timestamp": {
+            "type": "number",
+            "format": "float",
+            "description": "Timestamp (seconds) when plate was last seen"
+          },
+          "average_confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Average detection confidence"
+          },
+          "average_ocr_confidence": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "Average OCR confidence"
+          },
+          "frames_with_detection": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "List of frame numbers where plate was detected"
+          },
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlateOccurrence"
+            },
+            "description": "Detailed occurrence list"
+          }
+        }
+      },
+      "PlateOccurrence": {
+        "type": "object",
+        "properties": {
+          "frame_number": {
+            "type": "integer",
+            "description": "Frame number"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "format": "float",
+            "description": "Timestamp in seconds"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Detection confidence"
+          },
+          "ocr_confidence": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "OCR confidence"
+          },
+          "bbox": {
+            "$ref": "#/components/schemas/BoundingBox"
+          }
+        }
+      },
+      "JobSubmitResponse": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique job identifier",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing"
+            ],
+            "description": "Initial job status",
+            "example": "pending"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message",
+            "example": "Job queued for processing"
+          },
+          "status_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL to check job status",
+            "example": "/jobs/550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      },
+      "JobStatus": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Job identifier"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "completed",
+              "failed"
+            ],
+            "description": "Current job status"
+          },
+          "progress": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Processing progress (0.0 to 1.0)"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Job creation timestamp"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Processing start timestamp"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Processing completion timestamp"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message (if failed)"
+          },
+          "result": {
+            "type": "object",
+            "nullable": true,
+            "description": "Processing result (if completed)",
+            "additionalProperties": true
+          }
+        }
+      },
+      "GeminiDetectRequest": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 encoded image data"
+          },
+          "image_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the image to process"
+          },
+          "prompt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Custom detection prompt",
+            "default": "Detect all license plates in the image. The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000."
+          },
+          "include_visualization": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include annotated image in response"
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "data"
+            ]
+          },
+          {
+            "required": [
+              "image_url"
+            ]
+          }
+        ]
+      },
+      "GeminiDetectResponse": {
+        "type": "object",
+        "properties": {
+          "detected": {
+            "type": "boolean",
+            "description": "Whether any objects were detected"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of detections"
+          },
+          "detections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GeminiDetectionItem"
+            }
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message"
+          },
+          "image_shape": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
+            }
+          },
+          "visualization": {
+            "type": "string",
+            "nullable": true,
+            "description": "Base64 encoded annotated image"
+          }
+        }
+      },
+      "GeminiDetectionItem": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Detected object label"
+          },
+          "box_2d": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Bounding box as [x1, y1, x2, y2]"
+          },
+          "box_2d_normalized": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Normalized bounding box [ymin, xmin, ymax, xmax] 0-1000"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Detection confidence"
+          }
+        }
+      },
+      "GeminiSegmentRequest": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 encoded image data"
+          },
+          "image_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the image to process"
+          },
+          "prompt": {
+            "type": "string",
+            "nullable": true,
+            "description": "Custom segmentation prompt"
+          },
+          "include_visualization": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include annotated image with masks"
+          },
+          "alpha": {
+            "type": "number",
+            "format": "float",
+            "default": 0.5,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Transparency for mask overlay"
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "data"
+            ]
+          },
+          {
+            "required": [
+              "image_url"
+            ]
+          }
+        ]
+      },
+      "GeminiSegmentResponse": {
+        "type": "object",
+        "properties": {
+          "detected": {
+            "type": "boolean",
+            "description": "Whether any objects were segmented"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of segmentations"
+          },
+          "segmentations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GeminiSegmentationItem"
+            }
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message"
+          },
+          "image_shape": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
+            }
+          },
+          "visualization": {
+            "type": "string",
+            "nullable": true,
+            "description": "Base64 encoded image with mask overlays"
+          }
+        }
+      },
+      "GeminiSegmentationItem": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Segmented object label"
+          },
+          "box_2d": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Bounding box as [x1, y1, x2, y2]"
+          },
+          "box_2d_normalized": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Normalized bounding box [ymin, xmin, ymax, xmax] 0-1000"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "Segmentation confidence"
+          },
+          "mask_base64": {
+            "type": "string",
+            "nullable": true,
+            "description": "Base64 encoded mask image"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Error message",
+            "example": "Image could not be loaded"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error type"
+          },
+          "status_code": {
+            "type": "integer",
+            "description": "HTTP status code"
+          }
+        }
+      }
+    }
+  }
+}

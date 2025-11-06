@@ -4,7 +4,10 @@ os.environ['OPENCV_DISABLE_LIBGL'] = '1'
 # Set headless backend for OpenCV
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, BackgroundTasks, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -54,6 +57,43 @@ app = FastAPI(
     description="License plate detection using YOLOv11 - Based on Medium article implementation",
     version="1.0.0"
 )
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Exception handlers to ensure all errors return JSON
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure HTTPException always returns JSON"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "status_code": exc.status_code}
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Ensure validation errors return JSON"""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors(), "status_code": 422}
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Catch all exceptions and return JSON"""
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": str(exc), "status_code": 500}
+    )
 
 # Initialize the detector (singleton pattern)
 detector: Optional[LicensePlateDetector] = None
@@ -324,6 +364,85 @@ def save_detection_to_mongodb(detection_data: Dict[str, Any], collection_name: s
         return None
 
 
+def save_annotated_frame_to_mongodb(
+    frame: np.ndarray, 
+    detections: List[Dict[str, Any]], 
+    frame_number: int,
+    timestamp_seconds: float,
+    job_id: Optional[str] = None,
+    use_gridfs: bool = False
+) -> Optional[str]:
+    """
+    Save annotated frame (with bounding boxes) to MongoDB
+    
+    Args:
+        frame: Original frame as numpy array (BGR format from OpenCV)
+        detections: List of detection dictionaries
+        frame_number: Frame number in video
+        timestamp_seconds: Timestamp in seconds
+        job_id: Optional job ID for grouping frames
+        use_gridfs: If True, use GridFS for storage (for large images > 16MB)
+    
+    Returns:
+        MongoDB document ID or GridFS file ID, or None if failed
+    """
+    if mongo_db is None:
+        return None
+    
+    try:
+        detector = get_detector()
+        
+        # Generate annotated frame (base64 encoded)
+        annotated_base64 = detector.get_visualization(frame, detections)
+        
+        # Prepare frame document
+        frame_doc = {
+            "frame_number": frame_number,
+            "timestamp_seconds": timestamp_seconds,
+            "job_id": job_id,
+            "detection_count": len(detections),
+            "created_at": datetime.utcnow()
+        }
+        
+        if use_gridfs:
+            # Use GridFS for large images
+            from gridfs import GridFS
+            fs = GridFS(mongo_db)
+            
+            # Decode base64 to bytes
+            frame_bytes = base64.b64decode(annotated_base64)
+            
+            # Store in GridFS
+            file_id = fs.put(
+                frame_bytes,
+                filename=f"frame_{frame_number}_{job_id or 'unknown'}.png",
+                content_type="image/png",
+                frame_number=frame_number,
+                timestamp=timestamp_seconds,
+                job_id=job_id
+            )
+            
+            frame_doc["gridfs_file_id"] = str(file_id)
+            frame_doc["storage_type"] = "gridfs"
+            
+            # Save metadata
+            result = mongo_db["annotated_frames"].insert_one(frame_doc)
+            return str(result.inserted_id)
+        else:
+            # Use base64 in document (works for images < 16MB)
+            frame_doc["image_base64"] = annotated_base64
+            frame_doc["storage_type"] = "base64"
+            frame_doc["image_format"] = "PNG"
+            
+            # Save to MongoDB
+            result = mongo_db["annotated_frames"].insert_one(frame_doc)
+            return str(result.inserted_id)
+            
+    except Exception as e:
+        print(f"⚠ Error saving annotated frame to MongoDB: {e}")
+        return None
+
+
 def get_from_redis(key: str) -> Optional[Any]:
     """Get value from Redis cache"""
     if redis_client is None:
@@ -514,6 +633,16 @@ def process_video_background(job_id: str, video_path: str, frame_skip: int, star
                     frames_with_detections += 1
                     timestamp = frame_num / fps if fps > 0 else 0
                     
+                    # Save annotated frame to MongoDB
+                    frame_id = save_annotated_frame_to_mongodb(
+                        frame=frame,
+                        detections=detections,
+                        frame_number=frame_num,
+                        timestamp_seconds=timestamp,
+                        job_id=job_id,
+                        use_gridfs=False  # Use base64 for now, can switch to GridFS if needed
+                    )
+                    
                     for det in detections:
                         plate_text = det.get("plate_text", "").strip()
                         if not plate_text:
@@ -526,7 +655,8 @@ def process_video_background(job_id: str, video_path: str, frame_skip: int, star
                             "ocr_confidence": det.get("ocr_confidence"),
                             "bbox": det["bbox"],
                             "plate_text": plate_text,
-                            "class_name": det["class_name"]
+                            "class_name": det["class_name"],
+                            "frame_id": frame_id  # Reference to annotated frame in MongoDB
                         }
                         
                         all_detections.append(occurrence_data)
@@ -1056,6 +1186,16 @@ async def process_entire_video(
                 frames_with_detections += 1
                 timestamp = frame_num / fps if fps > 0 else 0
                 
+                # Save annotated frame to MongoDB
+                frame_id = save_annotated_frame_to_mongodb(
+                    frame=frame,
+                    detections=detections,
+                    frame_number=frame_num,
+                    timestamp_seconds=timestamp,
+                    job_id=None,  # No job_id for synchronous processing
+                    use_gridfs=False
+                )
+                
                 for det in detections:
                     plate_text = det.get("plate_text", "").strip()
                     if not plate_text:
@@ -1068,7 +1208,8 @@ async def process_entire_video(
                         "ocr_confidence": det.get("ocr_confidence"),
                         "bbox": det["bbox"],
                         "plate_text": plate_text,
-                        "class_name": det["class_name"]
+                        "class_name": det["class_name"],
+                        "frame_id": frame_id  # Reference to annotated frame in MongoDB
                     }
                     
                     all_detections.append(occurrence_data)
@@ -1290,6 +1431,16 @@ async def process_video_upload(
                     frames_with_detections += 1
                     timestamp = frame_num / fps if fps > 0 else 0
                     
+                    # Save annotated frame to MongoDB
+                    frame_id = save_annotated_frame_to_mongodb(
+                        frame=frame,
+                        detections=detections,
+                        frame_number=frame_num,
+                        timestamp_seconds=timestamp,
+                        job_id=None,  # No job_id for synchronous processing
+                        use_gridfs=False
+                    )
+                    
                     for det in detections:
                         plate_text = det.get("plate_text", "").strip()
                         if not plate_text:
@@ -1302,7 +1453,8 @@ async def process_video_upload(
                             "ocr_confidence": det.get("ocr_confidence"),
                             "bbox": det["bbox"],
                             "plate_text": plate_text,
-                            "class_name": det["class_name"]
+                            "class_name": det["class_name"],
+                            "frame_id": frame_id  # Reference to annotated frame in MongoDB
                         }
                         
                         all_detections.append(occurrence_data)
@@ -1453,13 +1605,26 @@ async def process_video_upload_async(
             )
     
     # Read and check file size
-    contents = await file.read()
+    try:
+        contents = await file.read()
+    except Exception as e:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Error reading file. File may be too large or corrupted: {str(e)}"
+        )
+    
     file_size = len(contents)
     
     if file_size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=413,
             detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024*1024):.0f}MB. Your file is {file_size / (1024*1024):.2f}MB."
+        )
+    
+    if file_size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file is empty"
         )
     
     try:
@@ -1506,6 +1671,9 @@ async def process_video_upload_async(
             message="Video processing job created. Use the job_id to check status.",
             status_url=f"/jobs/{job_id}"
         )
+    except HTTPException:
+        # Re-raise HTTPExceptions (they're already properly formatted by exception handler)
+        raise
     except Exception as e:
         # Clean up temp file if job creation failed
         if 'temp_path' in locals() and os.path.exists(temp_path):
@@ -1513,6 +1681,7 @@ async def process_video_upload_async(
                 os.unlink(temp_path)
             except:
                 pass
+        # Ensure all errors return JSON
         raise HTTPException(
             status_code=500,
             detail=f"Error creating job: {str(e)}"
@@ -1605,6 +1774,142 @@ async def get_job_result(job_id: str):
         status_code=500,
         detail=f"Unknown job status: {job['status']}"
     )
+
+
+@app.get("/frames/{frame_id}")
+async def get_annotated_frame(frame_id: str):
+    """
+    Get an annotated frame from MongoDB by frame ID
+    
+    Args:
+        frame_id: MongoDB document ID of the annotated frame
+    
+    Returns:
+        Annotated frame image (base64 encoded) or GridFS file
+    """
+    if mongo_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB not available"
+        )
+    
+    try:
+        from bson import ObjectId
+        
+        # Try to find frame document
+        frame_doc = mongo_db["annotated_frames"].find_one({"_id": ObjectId(frame_id)})
+        
+        if not frame_doc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Frame {frame_id} not found"
+            )
+        
+        storage_type = frame_doc.get("storage_type", "base64")
+        
+        if storage_type == "gridfs":
+            # Retrieve from GridFS
+            from gridfs import GridFS
+            fs = GridFS(mongo_db)
+            
+            gridfs_id = frame_doc.get("gridfs_file_id")
+            if not gridfs_id:
+                raise HTTPException(
+                    status_code=500,
+                    detail="GridFS file ID not found in frame document"
+                )
+            
+            gridfs_file = fs.get(ObjectId(gridfs_id))
+            frame_bytes = gridfs_file.read()
+            frame_base64 = base64.b64encode(frame_bytes).decode('utf-8')
+            
+            return {
+                "frame_id": frame_id,
+                "frame_number": frame_doc.get("frame_number"),
+                "timestamp_seconds": frame_doc.get("timestamp_seconds"),
+                "job_id": frame_doc.get("job_id"),
+                "detection_count": frame_doc.get("detection_count"),
+                "storage_type": "gridfs",
+                "image_base64": frame_base64,
+                "image_format": "PNG"
+            }
+        else:
+            # Return base64 from document
+            frame_base64 = frame_doc.get("image_base64")
+            if not frame_base64:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Image data not found in frame document"
+                )
+            
+            return {
+                "frame_id": frame_id,
+                "frame_number": frame_doc.get("frame_number"),
+                "timestamp_seconds": frame_doc.get("timestamp_seconds"),
+                "job_id": frame_doc.get("job_id"),
+                "detection_count": frame_doc.get("detection_count"),
+                "storage_type": "base64",
+                "image_base64": frame_base64,
+                "image_format": frame_doc.get("image_format", "PNG")
+            }
+            
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving frame: {str(e)}"
+        )
+
+
+@app.get("/frames/job/{job_id}")
+async def get_job_frames(job_id: str, limit: int = 100, skip: int = 0):
+    """
+    Get all annotated frames for a specific job
+    
+    Args:
+        job_id: Job ID
+        limit: Maximum number of frames to return (default: 100)
+        skip: Number of frames to skip (for pagination)
+    
+    Returns:
+        List of frame metadata (without image data for performance)
+    """
+    if mongo_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB not available"
+        )
+    
+    try:
+        frames = list(mongo_db["annotated_frames"].find(
+            {"job_id": job_id}
+        ).sort("frame_number", 1).skip(skip).limit(limit))
+        
+        # Remove image data for list view (can fetch individual frames with /frames/{frame_id})
+        for frame in frames:
+            frame["_id"] = str(frame["_id"])
+            if "image_base64" in frame:
+                del frame["image_base64"]
+            if "gridfs_file_id" in frame:
+                frame["gridfs_file_id"] = str(frame["gridfs_file_id"])
+        
+        total = mongo_db["annotated_frames"].count_documents({"job_id": job_id})
+        
+        return {
+            "job_id": job_id,
+            "total_frames": total,
+            "returned": len(frames),
+            "skip": skip,
+            "limit": limit,
+            "frames": frames
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving frames: {str(e)}"
+        )
 
 
 # Global Gemini service instance
