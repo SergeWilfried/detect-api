@@ -25,6 +25,7 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from datetime import datetime
 import json
+from bson import ObjectId
 
 # Database imports
 try:
@@ -2252,5 +2253,163 @@ async def gemini_segment_upload(
         },
         visualization=visualization
     )
+
+
+class DetectionListItem(BaseModel):
+    """Detection item for list endpoint"""
+    id: str
+    plate: str
+    confidence: float
+    timestamp: str
+    location: Optional[str] = None
+    camera: Optional[str] = None
+    image: Optional[str] = None
+    violation: Optional[str] = None
+
+
+class ViolationListItem(BaseModel):
+    """Violation item for list endpoint"""
+    id: str
+    plate: str
+    type: str
+    location: Optional[str] = None
+    timestamp: str
+    speed: Optional[str] = None
+    duration: Optional[str] = None
+    status: str
+    image: Optional[str] = None
+
+
+@app.get("/api/detections", response_model=List[DetectionListItem])
+async def get_detections(
+    limit: int = 100,
+    skip: int = 0,
+    plate: Optional[str] = None,
+    camera: Optional[str] = None
+):
+    """
+    Get list of detections from MongoDB
+    
+    Args:
+        limit: Maximum number of detections to return (default: 100)
+        skip: Number of detections to skip (for pagination)
+        plate: Filter by license plate number (optional)
+        camera: Filter by camera ID (optional)
+    
+    Returns:
+        List of detection items
+    """
+    if mongo_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB not available"
+        )
+    
+    try:
+        collection = mongo_db["detections"]
+        
+        # Build query
+        query = {}
+        if plate:
+            query["plate_text"] = {"$regex": plate, "$options": "i"}  # Case-insensitive search
+        if camera:
+            query["camera"] = camera
+        
+        # Query MongoDB
+        cursor = collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        detections = list(cursor)
+        
+        # Transform to response format
+        result = []
+        for doc in detections:
+            # Convert MongoDB document to response format
+            detection_item = DetectionListItem(
+                id=str(doc.get("_id", "")),
+                plate=doc.get("plate_text", doc.get("plate", "")),
+                confidence=doc.get("confidence", 0.0),
+                timestamp=doc.get("created_at", doc.get("timestamp", datetime.utcnow())).isoformat() if isinstance(doc.get("created_at", doc.get("timestamp")), datetime) else str(doc.get("created_at", doc.get("timestamp", datetime.utcnow().isoformat()))),
+                location=doc.get("location"),
+                camera=doc.get("camera"),
+                image=doc.get("image", "/generic-license-plate.png"),  # Default image or from doc
+                violation=doc.get("violation")
+            )
+            result.append(detection_item)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving detections: {str(e)}"
+        )
+
+
+@app.get("/api/violations", response_model=List[ViolationListItem])
+async def get_violations(
+    limit: int = 100,
+    skip: int = 0,
+    plate: Optional[str] = None,
+    status: Optional[str] = None,
+    violation_type: Optional[str] = None
+):
+    """
+    Get list of violations from MongoDB
+    
+    Args:
+        limit: Maximum number of violations to return (default: 100)
+        skip: Number of violations to skip (for pagination)
+        plate: Filter by license plate number (optional)
+        status: Filter by violation status (pending, reviewed, etc.) (optional)
+        violation_type: Filter by violation type (optional)
+    
+    Returns:
+        List of violation items
+    """
+    if mongo_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB not available"
+        )
+    
+    try:
+        collection = mongo_db["violations"]
+        
+        # Build query
+        query = {}
+        if plate:
+            query["plate"] = {"$regex": plate, "$options": "i"}  # Case-insensitive search
+        if status:
+            query["status"] = status
+        if violation_type:
+            query["type"] = {"$regex": violation_type, "$options": "i"}
+        
+        # Query MongoDB
+        cursor = collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
+        violations = list(cursor)
+        
+        # Transform to response format
+        result = []
+        for doc in violations:
+            # Convert MongoDB document to response format
+            violation_item = ViolationListItem(
+                id=str(doc.get("_id", "")),
+                plate=doc.get("plate", ""),
+                type=doc.get("type", doc.get("violation_type", "Unknown")),
+                location=doc.get("location"),
+                timestamp=doc.get("timestamp", doc.get("created_at", datetime.utcnow())).isoformat() if isinstance(doc.get("timestamp", doc.get("created_at")), datetime) else str(doc.get("timestamp", doc.get("created_at", datetime.utcnow().isoformat()))),
+                speed=doc.get("speed"),
+                duration=doc.get("duration"),
+                status=doc.get("status", "pending"),
+                image=doc.get("image", "/generic-license-plate.png")  # Default image or from doc
+            )
+            result.append(violation_item)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving violations: {str(e)}"
+        )
 
 

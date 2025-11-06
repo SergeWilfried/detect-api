@@ -56,3 +56,6 @@ visualization.png
 # Logs
 *.log
 
+test_async_video.py
+test_simple.py
+test_video.mp4
