@@ -38,8 +38,9 @@ COPY . .
 RUN chmod +x boot.sh
 
 # Expose port (Railway will set PORT env var)
-EXPOSE ${PORT:-8000}
+EXPOSE 8000
 
 # Use boot.sh wrapper, then run uvicorn
-CMD ["./boot.sh", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}"]
+# boot.sh will handle PORT variable expansion
+CMD ["./boot.sh", "uvicorn", "main:app"]
 

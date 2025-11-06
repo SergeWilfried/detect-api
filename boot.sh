@@ -42,5 +42,22 @@ else
 fi
 
 echo "[runtime] Running app..."
-exec "$@"
+
+# Handle PORT environment variable - Railway sets this automatically
+# If PORT is not set, default to 8000
+PORT=${PORT:-8000}
+
+# If the first argument is "uvicorn", construct the command properly
+if [ "$1" = "uvicorn" ]; then
+  # Extract all arguments after "uvicorn"
+  shift
+  APP_NAME="$1"
+  shift
+  
+  # Build uvicorn command with proper port
+  exec uvicorn "$APP_NAME" --host 0.0.0.0 --port "$PORT" "$@"
+else
+  # For other commands, execute as-is
+  exec "$@"
+fi
 
