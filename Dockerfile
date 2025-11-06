@@ -34,6 +34,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Ensure files directory exists and contains video file
+# Note: The video file must be committed to git or added manually
+RUN mkdir -p files && ls -la files/ || echo "Files directory created"
+
 # Make boot.sh executable
 RUN chmod +x boot.sh
 

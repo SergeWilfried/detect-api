@@ -386,6 +386,7 @@ async def root():
             "/detect/upload": "POST - Detect license plates (file upload)",
             "/detect/video": "GET - Process test video frame",
             "/process/video": "POST - Process entire video with statistics",
+            "/process/video/upload": "POST - Process uploaded video file",
             "/gemini/detect": "POST - Gemini object detection (2.0+)",
             "/gemini/segment": "POST - Gemini segmentation (2.5+)",
             "/gemini/detect/upload": "POST - Gemini detection from file upload",
@@ -669,6 +670,242 @@ async def process_entire_video(
         all_detections=all_detections,
         processing_parameters=processing_params
     )
+
+
+@app.post("/process/video/upload", response_model=VideoProcessResponse)
+async def process_video_upload(
+    file: UploadFile = File(..., description="Video file to process"),
+    frame_skip: int = Form(1, description="Process every Nth frame (1 = all frames)"),
+    start_frame: Optional[int] = Form(None, description="Start processing from this frame"),
+    end_frame: Optional[int] = Form(None, description="Stop processing at this frame"),
+    min_confidence: Optional[float] = Form(None, description="Minimum confidence threshold")
+):
+    """
+    Process an uploaded video file and return summary statistics
+    
+    Accepts video files via multipart/form-data upload.
+    The video is processed in memory or saved temporarily for processing.
+    
+    Args:
+        file: Video file to process (mp4, avi, mov, etc.)
+        frame_skip: Process every Nth frame (1 = all frames, 2 = every 2nd frame, etc.). Default: 1
+        start_frame: Start processing from this frame (optional)
+        end_frame: Stop processing at this frame (optional)
+        min_confidence: Minimum confidence threshold for detections (optional, overrides default)
+    
+    Returns:
+        Comprehensive statistics and all detections from the video
+    """
+    import tempfile
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("video/"):
+        # Also check filename extension as fallback
+        filename = file.filename or ""
+        if not any(filename.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']):
+            raise HTTPException(
+                status_code=400, 
+                detail="File must be a video (mp4, avi, mov, mkv, webm, flv)"
+            )
+    
+    # Save uploaded file temporarily
+    temp_path = None
+    try:
+        # Read video content
+        contents = await file.read()
+        
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
+            temp_file.write(contents)
+            temp_path = temp_file.name
+        
+        # Open video with OpenCV
+        video_cap = cv2.VideoCapture(temp_path)
+        
+        if not video_cap.isOpened():
+            raise HTTPException(
+                status_code=400,
+                detail="Could not open video file. Please ensure it's a valid video format."
+            )
+        
+        start_time = time.time()
+        
+        # Get video properties
+        video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = video_cap.get(cv2.CAP_PROP_FPS)
+        width = int(video_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_duration = total_frames / fps if fps > 0 else 0
+        
+        # Determine frame range
+        start_frame_num = start_frame if start_frame is not None else 0
+        end_frame_num = end_frame if end_frame is not None else total_frames - 1
+        
+        if start_frame_num < 0 or end_frame_num >= total_frames or start_frame_num > end_frame_num:
+            video_cap.release()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid frame range: {start_frame_num} to {end_frame_num} (total frames: {total_frames})"
+            )
+        
+        # Get detector
+        detector = get_detector()
+        
+        # Override confidence threshold if provided
+        original_threshold = detector.confidence_threshold
+        if min_confidence is not None:
+            detector.confidence_threshold = min_confidence
+        
+        try:
+            # Storage for all detections
+            all_detections = []
+            plate_data = defaultdict(list)  # plate_text -> list of occurrences
+            
+            processed_frames = 0
+            frames_with_detections = 0
+            
+            # Process frames
+            for frame_num in range(start_frame_num, end_frame_num + 1, frame_skip):
+                video_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                ret, frame = video_cap.read()
+                
+                if not ret:
+                    break
+                
+                # Detect license plates in this frame
+                detections = detector.detect_license_plates(frame)
+                
+                processed_frames += 1
+                
+                if detections:
+                    frames_with_detections += 1
+                    timestamp = frame_num / fps if fps > 0 else 0
+                    
+                    for det in detections:
+                        plate_text = det.get("plate_text", "").strip()
+                        if not plate_text:
+                            plate_text = f"UNKNOWN_{len(all_detections)}"
+                        
+                        occurrence_data = {
+                            "frame_number": frame_num,
+                            "timestamp_seconds": timestamp,
+                            "confidence": det["confidence"],
+                            "ocr_confidence": det.get("ocr_confidence"),
+                            "bbox": det["bbox"],
+                            "plate_text": plate_text,
+                            "class_name": det["class_name"]
+                        }
+                        
+                        all_detections.append(occurrence_data)
+                        plate_data[plate_text].append(occurrence_data)
+                
+                # Print progress every 50 frames
+                if processed_frames % 50 == 0:
+                    print(f"Processed {processed_frames} frames... ({len(all_detections)} detections so far)")
+            
+        finally:
+            # Restore original confidence threshold
+            detector.confidence_threshold = original_threshold
+            # Release video capture
+            video_cap.release()
+        
+        processing_time = time.time() - start_time
+        
+        # Calculate statistics
+        total_detections = len(all_detections)
+        unique_plates = len(plate_data)
+        detection_rate = total_detections / video_duration if video_duration > 0 else 0
+        avg_fps = processed_frames / processing_time if processing_time > 0 else None
+        
+        # Generate plate summaries
+        plate_summaries = []
+        for plate_text, occurrences in plate_data.items():
+            confidences = [occ["confidence"] for occ in occurrences]
+            ocr_confidences = [occ["ocr_confidence"] for occ in occurrences if occ["ocr_confidence"] is not None]
+            frame_numbers = [occ["frame_number"] for occ in occurrences]
+            
+            plate_summaries.append(PlateSummary(
+                plate_text=plate_text,
+                total_occurrences=len(occurrences),
+                first_seen_frame=min(frame_numbers),
+                last_seen_frame=max(frame_numbers),
+                first_seen_timestamp=min(occ["timestamp_seconds"] for occ in occurrences),
+                last_seen_timestamp=max(occ["timestamp_seconds"] for occ in occurrences),
+                average_confidence=sum(confidences) / len(confidences),
+                average_ocr_confidence=sum(ocr_confidences) / len(ocr_confidences) if ocr_confidences else None,
+                frames_with_detection=sorted(frame_numbers),
+                occurrences=[
+                    PlateOccurrence(
+                        frame_number=occ["frame_number"],
+                        timestamp_seconds=occ["timestamp_seconds"],
+                        confidence=occ["confidence"],
+                        ocr_confidence=occ["ocr_confidence"],
+                        bbox=BoundingBox(**occ["bbox"])
+                    )
+                    for occ in occurrences
+                ]
+            ))
+        
+        # Sort plate summaries by total occurrences (most frequent first)
+        plate_summaries.sort(key=lambda x: x.total_occurrences, reverse=True)
+        
+        # Create statistics
+        stats = VideoProcessingStats(
+            total_frames=total_frames,
+            processed_frames=processed_frames,
+            frames_with_detections=frames_with_detections,
+            total_detections=total_detections,
+            unique_plates=unique_plates,
+            video_duration_seconds=round(video_duration, 2),
+            processing_time_seconds=round(processing_time, 2),
+            average_fps=round(avg_fps, 2) if avg_fps else None,
+            detection_rate=round(detection_rate, 2)
+        )
+        
+        # Prepare response
+        video_info = {
+            "path": file.filename or "uploaded_video",
+            "total_frames": total_frames,
+            "fps": round(fps, 2),
+            "resolution": {
+                "width": width,
+                "height": height
+            },
+            "duration_seconds": round(video_duration, 2)
+        }
+        
+        processing_params = {
+            "frame_skip": frame_skip,
+            "start_frame": start_frame_num,
+            "end_frame": end_frame_num,
+            "confidence_threshold": min_confidence if min_confidence is not None else detector.confidence_threshold
+        }
+        
+        return VideoProcessResponse(
+            success=True,
+            message=f"Processed {processed_frames} frames. Found {unique_plates} unique license plate(s) with {total_detections} total detection(s).",
+            video_info=video_info,
+            statistics=stats,
+            plate_summaries=plate_summaries,
+            all_detections=all_detections,
+            processing_parameters=processing_params
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing video: {str(e)}"
+        )
+    finally:
+        # Clean up temporary file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
 
 
 # Global Gemini service instance
