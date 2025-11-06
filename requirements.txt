@@ -2,6 +2,10 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
 ultralytics>=8.0.0
+# Use headless OpenCV to avoid GUI library dependencies (libGL.so.1)
+# Note: If you still get libGL.so.1 errors, install system packages:
+# Ubuntu/Debian: apt-get install -y libgl1-mesa-glx libglib2.0-0
+# Alpine: apk add --no-cache libgl libglib
 opencv-python-headless>=4.8.0
 pillow>=10.0.0
 numpy>=1.24.0

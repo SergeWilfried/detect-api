@@ -2,6 +2,11 @@
 License Plate Detection Service using YOLO and OCR (EasyOCR or Gemini)
 Based on the Medium article: License Plate Recognition using YOLO and Custom Dataset Visualization
 """
+# Prevent OpenCV from trying to load GUI libraries (libGL.so.1)
+import os
+os.environ.setdefault('OPENCV_DISABLE_LIBGL', '1')
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any

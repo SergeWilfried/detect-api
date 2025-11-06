@@ -1,7 +1,12 @@
+# Prevent OpenCV from trying to load GUI libraries (libGL.so.1)
+import os
+os.environ['OPENCV_DISABLE_LIBGL'] = '1'
+# Set headless backend for OpenCV
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-import os
 from pathlib import Path
 from ultralytics import YOLO
 from detection_service import LicensePlateDetector, GeminiImageService
