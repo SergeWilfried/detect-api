@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /B \"c:\\Users\\Dan\\Desktop\\detect-api\")",
+      "Bash(copy:*)",
+      "Bash(python complete_refactoring.py:*)",
+      "Bash(dir /B \"c:\\Users\\Dan\\Desktop\\detect-api\\api\\routes\")",
+      "Bash(python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

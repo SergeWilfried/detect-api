@@ -14,6 +14,8 @@ License plate detection API using YOLOv11, based on the implementation from the 
 - 📊 Detailed detection results with confidence scores and OCR results
 - 🎬 **Full video processing with comprehensive statistics**
 - 📈 **Plate occurrence tracking and timeline analysis**
+- 🔍 **Smart deduplication** - Removes duplicate detections across frames
+- 📊 **Stability analysis** - Quality scoring for detected plates
 - 🔧 Easy to extend with custom trained models
 
 ## Installation
@@ -29,6 +31,13 @@ export GEMINI_API_KEY=your_api_key_here  # Required for Gemini features
 export YOLO_MODEL_PATH=/path/to/model.pt  # Optional: custom YOLO model
 export CONFIDENCE_THRESHOLD=0.25  # Optional: detection confidence threshold
 export OCR_ENGINE=easyocr  # Optional: 'easyocr' or 'gemini'
+
+# Deduplication settings (optional)
+export ENABLE_DEDUPLICATION=true  # Enable/disable deduplication
+export DEDUP_IOU_THRESHOLD=0.7  # Bbox overlap threshold (0-1)
+export DEDUP_MAX_FRAME_GAP=5  # Max frames apart to consider duplicates
+export DEDUP_MAX_DISTANCE=50.0  # Max pixel distance between centers
+export DEDUP_KEEP_STRATEGY=highest_confidence  # highest_confidence, first, or last
 ```
 
 3. The YOLOv11 model will be downloaded automatically on first run.
@@ -210,14 +219,17 @@ alpha: 0.6
 **Returns:** Comprehensive statistics including:
 - Video information (frames, FPS, resolution, duration)
 - Processing statistics (processed frames, detection counts, processing time)
+- **Deduplication statistics** (unique vs duplicate detections, removal rate)
 - Plate summaries (unique plates, occurrence counts, timestamps, confidence scores)
+- **Stability metrics** (quality scoring for detected plates)
 - All individual detections with frame numbers and timestamps
+- Separate list of duplicate detections for audit purposes
 
 **Example Response:**
 ```json
 {
   "success": true,
-  "message": "Processed 126 frames. Found 3 unique license plate(s) with 45 total detection(s).",
+  "message": "Processed 126 frames. Found 3 unique license plate(s) with 18 unique detection(s) (45 total, 27 duplicates removed).",
   "video_info": {
     "path": "./files/deneme.mp4",
     "total_frames": 631,
@@ -230,32 +242,62 @@ alpha: 0.6
     "processed_frames": 126,
     "frames_with_detections": 45,
     "total_detections": 45,
+    "unique_detections": 18,
+    "duplicate_detections": 27,
+    "deduplication_rate": 60.0,
     "unique_plates": 3,
     "video_duration_seconds": 21.03,
     "processing_time_seconds": 15.32,
     "average_fps": 8.22,
     "detection_rate": 2.14
   },
+  "deduplication": {
+    "total_detections": 45,
+    "unique_detections": 18,
+    "duplicate_detections": 27,
+    "deduplication_rate": 60.0,
+    "kept_strategy": "highest_confidence",
+    "config": {
+      "iou_threshold": 0.7,
+      "max_frame_gap": 5,
+      "max_distance": 50.0
+    }
+  },
   "plate_summaries": [
     {
       "plate_text": "N-894JV",
-      "total_occurrences": 18,
+      "total_occurrences": 6,
       "first_seen_frame": 100,
       "last_seen_frame": 250,
       "first_seen_timestamp": 3.33,
       "last_seen_timestamp": 8.33,
       "average_confidence": 0.7567,
       "average_ocr_confidence": 0.5534,
-      "frames_with_detection": [100, 101, 105, ...],
-      "occurrences": [...]
+      "frames_with_detection": [100, 125, 150, 175, 200, 225],
+      "occurrences": [...],
+      "stability": {
+        "is_stable": true,
+        "stability_score": 0.892,
+        "bbox_variance": 12.34,
+        "confidence_variance": 0.002,
+        "position_stability": 0.877,
+        "confidence_stability": 0.908
+      }
     }
   ],
-  "all_detections": [...],
+  "all_detections": [/* 18 unique detections */],
+  "duplicate_detections": [/* 27 duplicate detections */],
   "processing_parameters": {
     "frame_skip": 5,
     "start_frame": 0,
     "end_frame": 500,
-    "confidence_threshold": 0.25
+    "confidence_threshold": 0.25,
+    "deduplication_enabled": true,
+    "deduplication_config": {
+      "iou_threshold": 0.7,
+      "max_frame_gap": 5,
+      "max_distance": 50.0
+    }
   }
 }
 ```
@@ -316,10 +358,20 @@ If these files are not found, the API will still work using the default pretrain
 
 ## Environment Variables
 
+### Core Settings
 - `GEMINI_API_KEY`: Google Gemini API key (required for Gemini detection/segmentation features)
 - `YOLO_MODEL_PATH`: Path to custom YOLO model file (optional, overrides default path)
 - `CONFIDENCE_THRESHOLD`: Minimum confidence for detections (default: 0.25)
 - `OCR_ENGINE`: OCR engine to use - 'easyocr' or 'gemini' (default: 'easyocr')
+
+### Deduplication Settings
+- `ENABLE_DEDUPLICATION`: Enable/disable deduplication (default: true)
+- `DEDUP_IOU_THRESHOLD`: Bbox overlap threshold 0-1 (default: 0.7)
+- `DEDUP_MAX_FRAME_GAP`: Max frames apart to consider duplicates (default: 5)
+- `DEDUP_MAX_DISTANCE`: Max pixel distance between centers (default: 50.0)
+- `DEDUP_KEEP_STRATEGY`: Strategy for keeping detections - 'highest_confidence', 'first', or 'last' (default: 'highest_confidence')
+
+See [DEDUPLICATION_QUICKSTART.md](DEDUPLICATION_QUICKSTART.md) for detailed configuration guide.
 
 ## Training Your Own Model
 
