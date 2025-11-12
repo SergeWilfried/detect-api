@@ -121,6 +121,27 @@ def process_video_background(
                             "frame_id": frame_id
                         }
 
+                        # Save individual detection to database
+                        detection_doc = {
+                            "job_id": job_id,
+                            "frame_number": frame_num,
+                            "timestamp_seconds": timestamp,
+                            "confidence": det["confidence"],
+                            "ocr_confidence": det.get("ocr_confidence"),
+                            "bbox": det["bbox"],
+                            "plate_text": plate_text,
+                            "class_name": det["class_name"],
+                            "frame_id": frame_id,
+                            "video_info": {
+                                "total_frames": total_frames,
+                                "fps": fps,
+                                "resolution": {"width": width, "height": height}
+                            }
+                        }
+                        detection_id = storage_service.save_detection(detection_doc, collection_name="detections")
+                        if detection_id:
+                            occurrence_data["detection_id"] = detection_id
+
                         all_detections.append(occurrence_data)
                         plate_data[plate_text].append(occurrence_data)
 

@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import io
 
-from api.dependencies import get_detector
+from api.dependencies import get_detector, get_storage_service
 from models.requests import DetectRequest
 from models.responses import DetectResponse, Detection, BoundingBox
 
@@ -54,6 +54,26 @@ async def detect(request: DetectRequest):
         )
         for d in result["detections"]
     ]
+
+    # Save detections to database if any were found
+    storage = get_storage_service()
+    detection_ids = []
+    if result["detections"] and storage.mongo_db is not None:
+        for d in result["detections"]:
+            detection_doc = {
+                "source": "single_image",
+                "source_type": "url" if request.image_url else "base64",
+                "source_url": request.image_url if request.image_url else None,
+                "confidence": d["confidence"],
+                "ocr_confidence": d.get("ocr_confidence", 0.0),
+                "bbox": d["bbox"],
+                "plate_text": d.get("plate_text", ""),
+                "class_name": d["class_name"],
+                "image_shape": result.get("image_shape")
+            }
+            detection_id = storage.save_detection(detection_doc, collection_name="detections")
+            if detection_id:
+                detection_ids.append(detection_id)
 
     return DetectResponse(
         detected=result["detected"],
@@ -105,6 +125,29 @@ async def detect_upload(
         )
         for d in detections
     ]
+
+    # Save detections to database if any were found
+    storage = get_storage_service()
+    detection_ids = []
+    if detections and storage.mongo_db is not None:
+        for d in detections:
+            detection_doc = {
+                "source": "single_image",
+                "source_type": "file_upload",
+                "filename": file.filename,
+                "confidence": d["confidence"],
+                "ocr_confidence": d.get("ocr_confidence", 0.0),
+                "bbox": d["bbox"],
+                "plate_text": d.get("plate_text", ""),
+                "class_name": d["class_name"],
+                "image_shape": {
+                    "height": image_np.shape[0],
+                    "width": image_np.shape[1]
+                }
+            }
+            detection_id = storage.save_detection(detection_doc, collection_name="detections")
+            if detection_id:
+                detection_ids.append(detection_id)
 
     return DetectResponse(
         detected=len(detections) > 0,

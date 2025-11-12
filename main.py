@@ -13,7 +13,7 @@ from core.config import settings
 from api.dependencies import get_detector, get_storage_service
 
 # Import route modules
-from api.routes import health, detection, video, jobs, gemini
+from api.routes import health, detection, video, jobs, gemini, data
 
 
 @asynccontextmanager
@@ -94,3 +94,4 @@ app.include_router(detection.router)
 app.include_router(video.router)
 app.include_router(jobs.router)
 app.include_router(gemini.router)
+app.include_router(data.router)

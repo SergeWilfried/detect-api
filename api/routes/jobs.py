@@ -1,12 +1,74 @@
 """Job management endpoints"""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from api.dependencies import get_storage_service
 from models.responses import JobStatus
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+@router.get("")
+async def list_jobs(
+    status: Optional[str] = Query(None, description="Filter by job status (pending, processing, completed, failed)"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of jobs to return"),
+    offset: int = Query(0, ge=0, description="Number of jobs to skip")
+):
+    """
+    List all jobs with optional filtering
+    
+    Args:
+        status: Optional status filter
+        limit: Maximum number of jobs to return (1-1000)
+        offset: Number of jobs to skip
+        
+    Returns:
+        List of jobs with pagination info
+    """
+    storage = get_storage_service()
+    
+    if storage.mongo_db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB not available"
+        )
+    
+    try:
+        # Build query
+        query = {}
+        if status:
+            query["status"] = status
+        
+        # Query MongoDB
+        jobs = list(storage.mongo_db["jobs"].find(
+            query
+        ).sort("created_at", -1).skip(offset).limit(limit))
+        
+        # Convert ObjectId to string and format dates
+        for job in jobs:
+            job["_id"] = str(job["_id"])
+            # Ensure dates are in ISO format
+            if "created_at" in job and isinstance(job["created_at"], str):
+                pass  # Already string
+            elif "created_at" in job:
+                job["created_at"] = job["created_at"].isoformat()
+        
+        # Get total count
+        total = storage.mongo_db["jobs"].count_documents(query)
+        
+        return {
+            "jobs": jobs,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "count": len(jobs)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving jobs: {str(e)}"
+        )
 
 
 @router.get("/{job_id}", response_model=JobStatus)
