@@ -9,6 +9,7 @@ from api.dependencies import get_detector, get_storage_service
 from models.responses import JobSubmitResponse
 from services.video_service import process_video_background
 from core.config import settings
+from utils.upload_progress import UploadProgressTracker, create_storage_progress_callback
 
 router = APIRouter(prefix="/process/video", tags=["video"])
 
@@ -50,55 +51,107 @@ async def process_video_upload_async(
                 detail="File must be a video (mp4, avi, mov, mkv, webm, flv)"
             )
 
-    # Read and check file size
-    try:
-        contents = await file.read()
-    except Exception as e:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Error reading file. File may be too large or corrupted: {str(e)}"
-        )
-
-    file_size = len(contents)
-
-    if file_size > settings.max_file_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {settings.max_file_size / (1024*1024):.0f}MB. Your file is {file_size / (1024*1024):.2f}MB."
-        )
-
-    if file_size == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded file is empty"
-        )
+    # Generate job ID first for progress tracking
+    job_id = str(uuid.uuid4())
+    temp_path = None
 
     try:
-        # Generate job ID
-        job_id = str(uuid.uuid4())
+        # Initialize progress tracker with storage callback
+        progress_callback = create_storage_progress_callback(storage)
+        progress_tracker = UploadProgressTracker(
+            job_id=job_id,
+            progress_callback=progress_callback,
+            report_interval_bytes=5 * 1024 * 1024  # Report every 5MB
+        )
 
-        # Save file temporarily
+        # Create initial job record for upload tracking
+        initial_metadata = {
+            "filename": file.filename,
+            "status": "uploading"
+        }
+        storage.create_job(job_id, "video_upload", initial_metadata)
+
+        # Stream file in chunks (memory-efficient for large files)
+        file_size = 0
+        chunk_size = settings.chunk_size
+
+        # Save file temporarily using chunked streaming
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
-            temp_file.write(contents)
             temp_path = temp_file.name
 
-        # Create job record
+            # Read and write file in chunks
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+
+                # Check size limit before writing
+                if file_size + len(chunk) > settings.max_file_size:
+                    temp_file.close()
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                    storage.update_job_status(
+                        job_id,
+                        "failed",
+                        error=f"File too large. Maximum: {settings.max_file_size / (1024*1024):.0f}MB"
+                    )
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum size is {settings.max_file_size / (1024*1024):.0f}MB. Current size exceeds limit."
+                    )
+
+                temp_file.write(chunk)
+                file_size += len(chunk)
+
+                # Update progress tracker
+                progress_tracker.update(len(chunk))
+
+        # Validate file size
+        if file_size == 0:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            storage.update_job_status(job_id, "failed", error="Uploaded file is empty")
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is empty"
+            )
+
+        # Finish progress tracking
+        progress_tracker.finish()
+        upload_summary = progress_tracker.get_summary()
+        print(f"✓ File uploaded successfully: {upload_summary['size_mb']}MB in {upload_summary['elapsed_seconds']}s ({upload_summary['average_speed_mbps']:.2f}MB/s)")
+
+        # Update job record with processing metadata
         metadata = {
             "filename": file.filename,
             "file_size": file_size,
+            "file_size_mb": upload_summary['size_mb'],
+            "upload_time_seconds": upload_summary['elapsed_seconds'],
+            "upload_speed_mbps": upload_summary['average_speed_mbps'],
             "frame_skip": frame_skip,
             "start_frame": start_frame,
             "end_frame": end_frame,
-            "min_confidence": min_confidence
+            "min_confidence": min_confidence,
+            "upload_method": "chunked_streaming"
         }
 
-        try:
-            storage.create_job(job_id, "video_processing", metadata)
-        except Exception as job_error:
-            print(f"Error in create_job: {job_error}")
-            import traceback
-            traceback.print_exc()
-            raise
+        # Update job type from 'video_upload' to 'video_processing'
+        storage.update_job_status(
+            job_id,
+            "pending",
+            message="Upload complete. Processing will begin shortly.",
+            progress=0.0
+        )
+
+        # Update metadata
+        if storage.mongo_db is not None:
+            try:
+                storage.mongo_db["jobs"].update_one(
+                    {"job_id": job_id},
+                    {"$set": {"job_type": "video_processing", "metadata": metadata}}
+                )
+            except Exception as e:
+                print(f"⚠ Warning: Could not update job metadata: {e}")
 
         # Start background task
         background_tasks.add_task(
@@ -115,21 +168,33 @@ async def process_video_upload_async(
         return JobSubmitResponse(
             job_id=job_id,
             status="pending",
-            message="Video processing job created. Use the job_id to check status.",
+            message=f"Video processing job created ({file_size / (1024*1024):.2f}MB uploaded). Use the job_id to check status.",
             status_url=f"/jobs/{job_id}"
         )
+
     except HTTPException:
         # Re-raise HTTPExceptions (they're already properly formatted)
-        raise
-    except Exception as e:
-        # Clean up temp file if job creation failed
-        if 'temp_path' in locals() and os.path.exists(temp_path):
+        # Clean up temp file if it exists
+        if temp_path and os.path.exists(temp_path):
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+            except Exception as cleanup_error:
+                print(f"⚠ Warning: Could not delete temp file {temp_path}: {cleanup_error}")
+        raise
+
+    except Exception as e:
+        # Clean up temp file if job creation failed
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception as cleanup_error:
+                print(f"⚠ Warning: Could not delete temp file {temp_path}: {cleanup_error}")
+
         # Ensure all errors return JSON
+        import traceback
+        print(f"⚠ Error processing upload for job {job_id}:")
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Error creating job: {str(e)}"
+            detail=f"Error processing video upload: {str(e)}"
         )

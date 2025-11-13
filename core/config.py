@@ -3,6 +3,7 @@ Configuration management using Pydantic Settings
 Centralizes all environment variables and configuration
 """
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import Optional, List
 from pathlib import Path
 
@@ -39,6 +40,8 @@ class Settings(BaseSettings):
 
     # File Settings
     max_file_size: int = 500 * 1024 * 1024  # 500MB in bytes
+    chunk_size: int = 1024 * 1024  # 1MB chunks for streaming uploads
+    upload_timeout_seconds: int = 600  # 10 minutes timeout for large file uploads
     model_path: str = "./models/license_plate_detector.pt"
     video_path: str = "./files/2.mp4"
 
@@ -56,6 +59,11 @@ class Settings(BaseSettings):
     dedup_max_frame_gap: int = 5
     dedup_max_distance: float = 50.0
     dedup_keep_strategy: str = "highest_confidence"
+
+    # Speed Detection Settings
+    pixels_per_meter: float = Field(default=10.0, env="PIXELS_PER_METER")
+    speed_limit_kph: float = Field(default=60.0, env="SPEED_LIMIT_KPH")
+    enable_speed_detection: bool = Field(default=True, env="ENABLE_SPEED_DETECTION")
 
     model_config = {
         "env_file": ".env",

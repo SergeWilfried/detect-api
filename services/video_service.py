@@ -13,6 +13,63 @@ from utils.deduplication import deduplicate_detections, analyze_plate_stability
 from core.config import settings
 
 
+def calculate_speed(occurrences, fps, pixels_per_meter=10.0, speed_limit_kph=60):
+    """
+    Calculate estimated speed from plate occurrences
+    
+    Args:
+        occurrences: List of detection occurrences for same plate
+        fps: Video frames per second
+        pixels_per_meter: Calibration factor (pixels per real meter)
+        speed_limit_kph: Speed limit for violation detection
+    
+    Returns:
+        dict with speed_kph, speed_mph, is_violation, etc.
+    """
+    if len(occurrences) < 2:
+        return None
+    
+    # Sort by frame number
+    sorted_occ = sorted(occurrences, key=lambda x: x['frame_number'])
+    
+    speeds = []
+    for i in range(1, len(sorted_occ)):
+        prev = sorted_occ[i-1]
+        curr = sorted_occ[i]
+        
+        # Calculate center of bounding boxes
+        prev_center_y = (prev['bbox']['y1'] + prev['bbox']['y2']) / 2
+        curr_center_y = (curr['bbox']['y1'] + curr['bbox']['y2']) / 2
+        
+        # Distance in pixels (vertical movement - car approaching/leaving)
+        pixel_distance = abs(curr_center_y - prev_center_y)
+        
+        # Time elapsed
+        time_elapsed = (curr['frame_number'] - prev['frame_number']) / fps
+        
+        if time_elapsed > 0:
+            # Convert to real-world speed
+            meters_traveled = pixel_distance / pixels_per_meter
+            speed_mps = meters_traveled / time_elapsed
+            speed_kph = speed_mps * 3.6  # m/s to km/h
+            speeds.append(speed_kph)
+    
+    if not speeds:
+        return None
+    
+    avg_speed_kph = sum(speeds) / len(speeds)
+    avg_speed_mph = avg_speed_kph * 0.621371
+    
+    return {
+        "estimated_speed_kph": round(avg_speed_kph, 2),
+        "estimated_speed_mph": round(avg_speed_mph, 2),
+        "is_violation": avg_speed_kph > speed_limit_kph,
+        "speed_limit_kph": speed_limit_kph,
+        "confidence": "low",  # Indicate this is a simple estimation
+        "calibration_used": pixels_per_meter
+    }
+
+
 def process_video_background(
     job_id: str,
     video_path: str,
@@ -215,6 +272,19 @@ def process_video_background(
             # Analyze plate stability
             stability_metrics = analyze_plate_stability(occurrences)
 
+            # Calculate speed if enabled
+            speed_data = None
+            is_violation = False
+            if settings.enable_speed_detection:
+                speed_data = calculate_speed(
+                    occurrences,
+                    fps,
+                    pixels_per_meter=settings.pixels_per_meter,
+                    speed_limit_kph=settings.speed_limit_kph
+                )
+                if speed_data:
+                    is_violation = speed_data['is_violation']
+
             plate_summaries.append({
                 "plate_text": plate_text,
                 "total_occurrences": len(occurrences),
@@ -226,7 +296,9 @@ def process_video_background(
                 "average_ocr_confidence": sum(ocr_confidences) / len(ocr_confidences) if ocr_confidences else None,
                 "frames_with_detection": sorted(frame_numbers),
                 "occurrences": occurrences,
-                "stability": stability_metrics  # NEW: Stability analysis
+                "stability": stability_metrics,  # NEW: Stability analysis
+                "speed_analysis": speed_data,  # NEW: Speed analysis
+                "is_violation": is_violation  # NEW: Violation flag
             })
 
         # Sort by total occurrences

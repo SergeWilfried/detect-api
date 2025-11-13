@@ -152,6 +152,11 @@ class StorageService:
             MongoDB document ID or GridFS file ID, or None if failed
         """
         if self.mongo_db is None:
+            print(f"⚠ Warning: MongoDB not connected, cannot save annotated frame {frame_number}")
+            return None
+
+        if annotated_base64 is None:
+            print(f"⚠ Warning: No annotated_base64 provided for frame {frame_number}")
             return None
 
         try:
@@ -160,9 +165,20 @@ class StorageService:
                 "frame_number": frame_number,
                 "timestamp_seconds": timestamp_seconds,
                 "job_id": job_id,
-                "detection_count": len(detections),
+                "detection_count": len(detections) if detections else 0,
                 "created_at": datetime.utcnow()
             }
+
+            # Add detection metadata if available
+            if detections:
+                frame_doc["detections"] = [
+                    {
+                        "plate_text": d.get("plate_text", ""),
+                        "confidence": d.get("confidence", 0.0),
+                        "bbox": d.get("bbox", {})
+                    }
+                    for d in detections
+                ]
 
             if use_gridfs:
                 # Use GridFS for large images
@@ -187,6 +203,7 @@ class StorageService:
 
                 # Save metadata
                 result = self.mongo_db["annotated_frames"].insert_one(frame_doc)
+                print(f"✓ Saved annotated frame {frame_number} to GridFS (ID: {result.inserted_id})")
                 return str(result.inserted_id)
             else:
                 # Use base64 in document (works for images < 16MB)
@@ -196,10 +213,13 @@ class StorageService:
 
                 # Save to MongoDB
                 result = self.mongo_db["annotated_frames"].insert_one(frame_doc)
+                print(f"✓ Saved annotated frame {frame_number} to MongoDB (ID: {result.inserted_id})")
                 return str(result.inserted_id)
 
         except Exception as e:
-            print(f"⚠ Error saving annotated frame to MongoDB: {e}")
+            import traceback
+            print(f"⚠ Error saving annotated frame {frame_number} to MongoDB: {e}")
+            traceback.print_exc()
             return None
 
     # Redis operations

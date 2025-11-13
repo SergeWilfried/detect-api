@@ -55,10 +55,25 @@ async def detect(request: DetectRequest):
         for d in result["detections"]
     ]
 
-    # Save detections to database if any were found
+    # Save detections and annotated frame to database if any were found
     storage = get_storage_service()
     detection_ids = []
+    frame_id = None
+    
     if result["detections"] and storage.mongo_db is not None:
+        # Save annotated frame if visualization was generated
+        if visualization and image is not None:
+            frame_id = storage.save_annotated_frame(
+                frame=image,
+                detections=result["detections"],
+                frame_number=0,  # Single image, no frame number
+                timestamp_seconds=0.0,
+                job_id=None,  # No job ID for single image
+                use_gridfs=False,
+                annotated_base64=visualization
+            )
+        
+        # Save individual detections
         for d in result["detections"]:
             detection_doc = {
                 "source": "single_image",
@@ -69,7 +84,8 @@ async def detect(request: DetectRequest):
                 "bbox": d["bbox"],
                 "plate_text": d.get("plate_text", ""),
                 "class_name": d["class_name"],
-                "image_shape": result.get("image_shape")
+                "image_shape": result.get("image_shape"),
+                "frame_id": frame_id  # Link to annotated frame if saved
             }
             detection_id = storage.save_detection(detection_doc, collection_name="detections")
             if detection_id:
@@ -126,10 +142,25 @@ async def detect_upload(
         for d in detections
     ]
 
-    # Save detections to database if any were found
+    # Save detections and annotated frame to database if any were found
     storage = get_storage_service()
     detection_ids = []
+    frame_id = None
+    
     if detections and storage.mongo_db is not None:
+        # Save annotated frame if visualization was generated
+        if visualization:
+            frame_id = storage.save_annotated_frame(
+                frame=image_np,
+                detections=detections,
+                frame_number=0,  # Single image, no frame number
+                timestamp_seconds=0.0,
+                job_id=None,  # No job ID for single image
+                use_gridfs=False,
+                annotated_base64=visualization
+            )
+        
+        # Save individual detections
         for d in detections:
             detection_doc = {
                 "source": "single_image",
@@ -143,7 +174,8 @@ async def detect_upload(
                 "image_shape": {
                     "height": image_np.shape[0],
                     "width": image_np.shape[1]
-                }
+                },
+                "frame_id": frame_id  # Link to annotated frame if saved
             }
             detection_id = storage.save_detection(detection_doc, collection_name="detections")
             if detection_id:
