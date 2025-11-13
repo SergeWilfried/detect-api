@@ -19,4 +19,6 @@ python-dotenv>=1.0.0
 # Database dependencies
 pymongo>=4.6.0
 redis>=5.0.0
+# AWS S3 dependencies
+boto3>=1.34.0
 

@@ -180,22 +180,45 @@ curl -X POST "http://localhost:8000/process/video/upload/async" \
 watch -n 1 'curl -s "http://localhost:8000/jobs/YOUR_JOB_ID" | jq'
 ```
 
+## AWS S3 Integration (Production Ready)
+
+For production deployments with large files (150-250MB+), we now support **AWS S3 direct upload**:
+
+### Benefits
+- **Reduced server load**: Clients upload directly to S3
+- **Better performance**: Leverage AWS global infrastructure
+- **Cost savings**: ~35% reduction in bandwidth costs
+- **Higher scalability**: No server bandwidth bottleneck
+
+### Quick Start
+See [AWS_S3_INTEGRATION.md](AWS_S3_INTEGRATION.md) for complete setup guide.
+
+```bash
+# Enable S3 in .env
+ENABLE_S3=true
+S3_BUCKET_NAME=your-video-bucket
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+
+# Get pre-signed upload URL
+curl -X POST "/process/video/upload/s3/presigned-url" \
+  -d '{"filename": "video.mp4", "file_size": 200000000}'
+
+# Upload directly to S3 (client-side)
+# Then process: POST /process/video/s3 with s3_key
+```
+
 ## Future Enhancements
 
 ### 1. Resumable Uploads (tus protocol)
 - Allow upload resume after network failure
 - Better for mobile/unstable connections
 
-### 2. Cloud Storage Integration
-- Direct upload to S3/Azure/GCP
-- Pre-signed URLs
-- Reduced server load
-
-### 3. WebSocket Progress Updates
+### 2. WebSocket Progress Updates
 - Real-time progress without polling
 - Push notifications to client
 
-### 4. Multi-part Upload
+### 3. Multi-part Upload
 - Parallel chunk uploads
 - Faster for large files
 - Better bandwidth utilization

@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     # Redis Settings
     redis_url: Optional[str] = None
 
+    # AWS S3 Settings
+    enable_s3: bool = Field(default=False, env="ENABLE_S3")
+    aws_access_key_id: Optional[str] = Field(default=None, env="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: Optional[str] = Field(default=None, env="AWS_SECRET_ACCESS_KEY")
+    aws_region: str = Field(default="us-east-1", env="AWS_REGION")
+    s3_bucket_name: Optional[str] = Field(default=None, env="S3_BUCKET_NAME")
+    s3_upload_expiration: int = Field(default=3600, env="S3_UPLOAD_EXPIRATION")  # 1 hour
+    s3_download_expiration: int = Field(default=86400, env="S3_DOWNLOAD_EXPIRATION")  # 24 hours
+    s3_video_prefix: str = Field(default="videos/", env="S3_VIDEO_PREFIX")
+
     # File Settings
     max_file_size: int = 500 * 1024 * 1024  # 500MB in bytes
     chunk_size: int = 1024 * 1024  # 1MB chunks for streaming uploads
